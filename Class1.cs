@@ -317,10 +317,11 @@ namespace CraftingSearchBar
             // By knowing the count, we only process the newly instantiated elements at the end of the list.
             var availableRecipesField = AccessTools.Field(typeof(InventoryGui), "m_availableRecipes");
             int validCount = 0;
+            System.Collections.IList recipesList = null;
             if (availableRecipesField != null)
             {
                 var recipes = availableRecipesField.GetValue(gui);
-                var recipesList = recipes as System.Collections.IList;
+                recipesList = recipes as System.Collections.IList;
                 if (recipesList != null)
                 {
                     validCount = recipesList.Count;
@@ -350,7 +351,58 @@ namespace CraftingSearchBar
                     string uiName = GetRecipeNameFromUI(child);
                     if (!string.IsNullOrEmpty(uiName))
                     {
-                        shouldShow = uiName.ToLowerInvariant().Contains(filter);
+                        string searchKeywords = uiName.ToLowerInvariant();
+                        
+                        // Try to append category keywords directly from the recipe data
+                        if (recipesList != null)
+                        {
+                            int recipeIndex = i - startIndex;
+                            if (recipeIndex >= 0 && recipeIndex < recipesList.Count)
+                            {
+                                try
+                                {
+                                    var kvp = recipesList[recipeIndex];
+                                    Recipe recipe = kvp as Recipe;
+                                    if (recipe == null)
+                                    {
+                                        var keyProp = kvp.GetType().GetProperty("Key");
+                                        if (keyProp != null)
+                                        {
+                                            recipe = keyProp.GetValue(kvp, null) as Recipe;
+                                        }
+                                    }
+
+                                    if (recipe?.m_item?.m_itemData?.m_shared != null)
+                                    {
+                                        string itemType = recipe.m_item.m_itemData.m_shared.m_itemType.ToString().ToLowerInvariant();
+                                        
+                                        if (itemType == "consumable") searchKeywords += " food eat meal";
+                                        else if (itemType == "helmet") searchKeywords += " head hat armor armour helmet";
+                                        else if (itemType == "chest") searchKeywords += " body shirt armor armour breastplate";
+                                        else if (itemType == "legs") searchKeywords += " pants trousers armor armour leggings";
+                                        else if (itemType == "shoulder") searchKeywords += " cape cloak armor armour back";
+                                        else if (itemType == "shield") searchKeywords += " armor armour defend";
+                                        else if (itemType == "ammo") searchKeywords += " arrow arrows bolt bolts ammo";
+                                        else if (itemType.Contains("weapon") || itemType == "bow") searchKeywords += " weapon combat";
+                                        else if (itemType == "tool") searchKeywords += " tool axe pickaxe hammer";
+                                    }
+                                }
+                                catch
+                                {
+                                    // Ignore reflection errors for categories, just fallback to name
+                                }
+                            }
+                        }
+
+                        // Basic match check
+                        shouldShow = searchKeywords.Contains(filter);
+                        
+                        // Handle simple plurals (e.g., searching "arrows" matches "arrow")
+                        if (!shouldShow && filter.EndsWith("s") && filter.Length > 3)
+                        {
+                            string singular = filter.Substring(0, filter.Length - 1);
+                            shouldShow = searchKeywords.Contains(singular);
+                        }
                     }
                     else
                     {
@@ -372,11 +424,18 @@ namespace CraftingSearchBar
                 }
             }
 
-            // Adjust the scroll view content size
+            // Adjust the scroll view content size using Valheim's minimum base size
+            // This prevents the container from shrinking too much and pulling top-anchored elements downwards.
             var listRect = listRoot.GetComponent<RectTransform>();
             if (listRect != null)
             {
-                listRect.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, Mathf.Max(0, currentY));
+                float baseSize = 0f;
+                var baseSizeField = AccessTools.Field(typeof(InventoryGui), "m_recipeListBaseSize");
+                if (baseSizeField != null)
+                {
+                    baseSize = (float)baseSizeField.GetValue(gui);
+                }
+                listRect.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, Mathf.Max(baseSize, currentY));
             }
         }
 
